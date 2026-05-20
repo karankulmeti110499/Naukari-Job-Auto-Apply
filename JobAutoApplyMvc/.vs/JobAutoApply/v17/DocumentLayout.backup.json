@@ -1,0 +1,149 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{0EDD231A-E66A-4E76-87CC-62C559D71B3B}|JobAutoApply.Web\\JobAutoApply.Web.csproj|c:\\users\\karan.kulmeti\\jobautoapplymvc\\jobautoapply.web\\controllers\\jobscontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{0EDD231A-E66A-4E76-87CC-62C559D71B3B}|JobAutoApply.Web\\JobAutoApply.Web.csproj|solutionrelative:jobautoapply.web\\controllers\\jobscontroller.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{0EDD231A-E66A-4E76-87CC-62C559D71B3B}|JobAutoApply.Web\\JobAutoApply.Web.csproj|c:\\users\\karan.kulmeti\\jobautoapplymvc\\jobautoapply.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}",
+      "RelativeMoniker": "D:0:0:{0EDD231A-E66A-4E76-87CC-62C559D71B3B}|JobAutoApply.Web\\JobAutoApply.Web.csproj|solutionrelative:jobautoapply.web\\appsettings.json||{90A6B3A7-C1A3-4009-A288-E2FF89E96FA0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{0EDD231A-E66A-4E76-87CC-62C559D71B3B}|JobAutoApply.Web\\JobAutoApply.Web.csproj|c:\\users\\karan.kulmeti\\jobautoapplymvc\\jobautoapply.web\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{0EDD231A-E66A-4E76-87CC-62C559D71B3B}|JobAutoApply.Web\\JobAutoApply.Web.csproj|solutionrelative:jobautoapply.web\\program.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 20,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:144:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:143:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:142:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:141:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:132:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:135:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{004be353-6879-467c-9d1e-9ac23cdf6d49}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:133:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:138:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:134:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:136:0:{116d2292-e37d-41cd-a077-ebacac4c8cc4}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:138:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:139:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:141:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{75188d03-9892-4ae2-abf1-207126247ce5}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:1613416671:0:{71f361cc-493f-47c0-923f-f2570b6f8618}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:323948898:0:{81164725-9a96-4ece-a4cb-440d8fd285e5}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:254354193:0:{71f361cc-493f-47c0-923f-f2570b6f8618}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{aa2115a1-9712-457b-9047-dbb71ca2cdd2}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c4feeaa-4718-4aa9-859d-94ce25d182ba}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "JobsController.cs",
+              "DocumentMoniker": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\JobAutoApply.Web\\Controllers\\JobsController.cs",
+              "RelativeDocumentMoniker": "JobAutoApply.Web\\Controllers\\JobsController.cs",
+              "ToolTip": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\JobAutoApply.Web\\Controllers\\JobsController.cs",
+              "RelativeToolTip": "JobAutoApply.Web\\Controllers\\JobsController.cs",
+              "ViewState": "AgIAAG0AAAAAAAAAAAAgwIUAAABMAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-05-20T18:22:53.737Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "appsettings.json",
+              "DocumentMoniker": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\JobAutoApply.Web\\appsettings.json",
+              "RelativeDocumentMoniker": "JobAutoApply.Web\\appsettings.json",
+              "ToolTip": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\JobAutoApply.Web\\appsettings.json",
+              "RelativeToolTip": "JobAutoApply.Web\\appsettings.json",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABQAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001642|",
+              "WhenOpened": "2026-05-20T17:48:22.137Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "Program.cs",
+              "DocumentMoniker": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\JobAutoApply.Web\\Program.cs",
+              "RelativeDocumentMoniker": "JobAutoApply.Web\\Program.cs",
+              "ToolTip": "C:\\Users\\karan.kulmeti\\JobAutoApplyMvc\\JobAutoApply.Web\\Program.cs",
+              "RelativeToolTip": "JobAutoApply.Web\\Program.cs",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAkAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-05-20T17:29:35.678Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
