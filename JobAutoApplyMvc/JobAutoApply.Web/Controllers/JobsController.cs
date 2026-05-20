@@ -151,6 +151,8 @@ public sealed class JobsController : Controller
                 Password = model.Password,
                 MaxJobs = model.MaxJobs,
                 Headless = model.Headless,
+                ResumeText = resumeText,
+                ResumeAnalysis = analysis,
             };
 
             var results = await _naukriAutomationService.SearchAndApplyAsync(request, cancellationToken);
@@ -238,6 +240,7 @@ public sealed class JobsController : Controller
         }
 
         return record.Status.Contains("confirmed", StringComparison.OrdinalIgnoreCase)
+            || record.Status.Contains("applied", StringComparison.OrdinalIgnoreCase)
             || record.Status.Contains("submitted", StringComparison.OrdinalIgnoreCase)
             || record.Status.Contains("success", StringComparison.OrdinalIgnoreCase);
     }

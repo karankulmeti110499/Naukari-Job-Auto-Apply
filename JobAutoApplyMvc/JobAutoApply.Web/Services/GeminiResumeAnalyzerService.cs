@@ -211,6 +211,83 @@ public sealed class GeminiResumeAnalyzerService : IGeminiResumeAnalyzerService
         return merged.Take(8).ToList();
     }
 
+    public async Task<string?> SuggestAnswerForApplicationQuestionAsync(string question, string resumeText, ResumeAnalysisResult analysis, IReadOnlyCollection<string> optionHints, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(question))
+        {
+            return null;
+        }
+
+        var fallbackAnswer = BuildFallbackQuestionAnswer(question, resumeText, analysis, optionHints);
+        if (string.IsNullOrWhiteSpace(_geminiOptions.ApiKey))
+        {
+            return fallbackAnswer;
+        }
+
+        var optionsText = optionHints.Count == 0
+            ? "N/A"
+            : string.Join(", ", optionHints.Take(10));
+
+        var prompt = """
+                     You are assisting in answering a job application screening question.
+                     Use ONLY the candidate data below.
+
+                     Return ONLY one concise plain-text answer.
+                     If the answer cannot be inferred from candidate data, return exactly: NOT_FOUND
+
+                     Screening Question:
+                     """ + question + Environment.NewLine + """
+
+                     Available Options (if select/radio):
+                     """ + optionsText + Environment.NewLine + """
+
+                     Candidate Suggested Role:
+                     """ + analysis.SuggestedJobTitle + Environment.NewLine + """
+
+                     Candidate Skills:
+                     """ + string.Join(", ", analysis.Keywords) + Environment.NewLine + """
+
+                     Resume Text:
+                     """ + Environment.NewLine + TruncateResumeText(resumeText);
+
+        var requestBody = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    parts = new[]
+                    {
+                        new { text = prompt },
+                    },
+                },
+            },
+        };
+
+        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{_geminiOptions.Model}:generateContent?key={_geminiOptions.ApiKey}";
+        using var response = await _httpClient.PostAsJsonAsync(endpoint, requestBody, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var reason = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Gemini question-answer call failed ({StatusCode}): {Reason}", response.StatusCode, reason);
+            return fallbackAnswer;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var responseText = GetModelText(document.RootElement);
+        var cleaned = CleanupModelAnswer(responseText);
+
+        if (string.IsNullOrWhiteSpace(cleaned)
+            || cleaned.Equals("NOT_FOUND", StringComparison.OrdinalIgnoreCase)
+            || cleaned.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase))
+        {
+            return fallbackAnswer;
+        }
+
+        return cleaned;
+    }
+
     private static string GetModelText(JsonElement root)
     {
         if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
@@ -544,6 +621,105 @@ public sealed class GeminiResumeAnalyzerService : IGeminiResumeAnalyzerService
         value = Regex.Replace(value, @"\bui\b", "UI", RegexOptions.IgnoreCase);
         value = Regex.Replace(value, @"\bux\b", "UX", RegexOptions.IgnoreCase);
         value = Regex.Replace(value, @"\bsql\b", "SQL", RegexOptions.IgnoreCase);
+
+        return value;
+    }
+
+    private static string? BuildFallbackQuestionAnswer(string question, string resumeText, ResumeAnalysisResult analysis, IReadOnlyCollection<string> optionHints)
+    {
+        var normalizedQuestion = Regex.Replace(question, "\\s+", " ").Trim();
+
+        if (Regex.IsMatch(normalizedQuestion, "skills?|technologies|stack", RegexOptions.IgnoreCase))
+        {
+            var answer = string.Join(", ", analysis.Keywords.Take(6));
+            return string.IsNullOrWhiteSpace(answer) ? null : answer;
+        }
+
+        if (Regex.IsMatch(normalizedQuestion, "current role|designation|job title|position|profile", RegexOptions.IgnoreCase))
+        {
+            return string.IsNullOrWhiteSpace(analysis.SuggestedJobTitle) ? null : analysis.SuggestedJobTitle;
+        }
+
+        if (Regex.IsMatch(normalizedQuestion, "experience|years", RegexOptions.IgnoreCase))
+        {
+            var years = TryExtractMaxYears(resumeText);
+            if (years.HasValue)
+            {
+                return years.Value.ToString();
+            }
+        }
+
+        if (Regex.IsMatch(normalizedQuestion, "linkedin", RegexOptions.IgnoreCase))
+        {
+            return TryExtractUrl(resumeText, "linkedin.com");
+        }
+
+        if (Regex.IsMatch(normalizedQuestion, "github", RegexOptions.IgnoreCase))
+        {
+            return TryExtractUrl(resumeText, "github.com");
+        }
+
+        if (optionHints.Count > 0)
+        {
+            var matched = optionHints.FirstOrDefault(option =>
+                analysis.Keywords.Any(keyword => option.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrWhiteSpace(analysis.SuggestedJobTitle)
+                    && option.Contains(analysis.SuggestedJobTitle, StringComparison.OrdinalIgnoreCase)));
+            if (!string.IsNullOrWhiteSpace(matched))
+            {
+                return matched;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? TryExtractMaxYears(string resumeText)
+    {
+        var matches = Regex.Matches(resumeText, @"\b(\d{1,2})\s*\+?\s*(years|year|yrs|yr)\b", RegexOptions.IgnoreCase);
+        if (matches.Count == 0)
+        {
+            return null;
+        }
+
+        var values = matches
+            .Select(m => m.Groups[1].Value)
+            .Select(v => int.TryParse(v, out var years) ? years : -1)
+            .Where(v => v >= 0)
+            .ToList();
+
+        return values.Count == 0 ? null : values.Max();
+    }
+
+    private static string? TryExtractUrl(string resumeText, string contains)
+    {
+        var matches = Regex.Matches(resumeText, @"https?://[^\s)]+", RegexOptions.IgnoreCase);
+        foreach (Match match in matches)
+        {
+            if (match.Value.Contains(contains, StringComparison.OrdinalIgnoreCase))
+            {
+                return match.Value.Trim();
+            }
+        }
+
+        return null;
+    }
+
+    private static string CleanupModelAnswer(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+        {
+            return string.Empty;
+        }
+
+        var value = responseText.Trim();
+        value = value.Replace("```", string.Empty, StringComparison.Ordinal);
+        value = value.Trim('"', '\'', '`');
+        value = Regex.Replace(value, "\\s+", " ").Trim();
+        if (value.Length > 220)
+        {
+            value = value[..220].Trim();
+        }
 
         return value;
     }

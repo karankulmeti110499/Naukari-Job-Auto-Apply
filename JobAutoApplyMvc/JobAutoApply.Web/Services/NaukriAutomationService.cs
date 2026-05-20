@@ -10,11 +10,13 @@ namespace JobAutoApply.Web.Services;
 public sealed class NaukriAutomationService : INaukriAutomationService
 {
     private readonly NaukriOptions _naukriOptions;
+    private readonly IGeminiResumeAnalyzerService _geminiResumeAnalyzerService;
     private readonly ILogger<NaukriAutomationService> _logger;
 
-    public NaukriAutomationService(IOptions<NaukriOptions> naukriOptions, ILogger<NaukriAutomationService> logger)
+    public NaukriAutomationService(IOptions<NaukriOptions> naukriOptions, IGeminiResumeAnalyzerService geminiResumeAnalyzerService, ILogger<NaukriAutomationService> logger)
     {
         _naukriOptions = naukriOptions.Value;
+        _geminiResumeAnalyzerService = geminiResumeAnalyzerService;
         _logger = logger;
     }
 
@@ -80,7 +82,7 @@ public sealed class NaukriAutomationService : INaukriAutomationService
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var record = await ProcessJobLinkAsync(context, link);
+                var record = await ProcessJobLinkAsync(context, link, request, cancellationToken);
                 results.Add(record);
             }
 
@@ -679,7 +681,7 @@ public sealed class NaukriAutomationService : INaukriAutomationService
         return value;
     }
 
-    private async Task<JobApplyRecord> ProcessJobLinkAsync(IBrowserContext context, string link)
+    private async Task<JobApplyRecord> ProcessJobLinkAsync(IBrowserContext context, string link, JobSearchRequest request, CancellationToken cancellationToken)
     {
         var page = await context.NewPageAsync();
 
@@ -722,12 +724,31 @@ public sealed class NaukriAutomationService : INaukriAutomationService
                 }
                 else
                 {
+                    var questionHandling = await TryHandleApplicationQuestionsAsync(page, request, cancellationToken);
                     var confirmed = await WaitForAppliedConfirmationAsync(page);
                     if (confirmed)
                     {
                         record.ApplyType = "Apply";
                         record.Status = "Applied confirmed";
-                        record.Notes = "Application was confirmed on Naukri after click.";
+                        record.Notes = questionHandling.HasQuestions
+                            ? questionHandling.UnansweredQuestions.Count > 0
+                                ? $"Application confirmed after answering {questionHandling.AnsweredCount} screening question(s). Unanswered/optional questions seen: {questionHandling.UnansweredQuestions.Count}."
+                                : $"Application confirmed after answering {questionHandling.AnsweredCount} screening question(s)."
+                            : "Application was confirmed on Naukri after click.";
+                    }
+                    else if (questionHandling.HasQuestions)
+                    {
+                        record.ApplyType = "Need to answer questions";
+                        if (questionHandling.UnansweredQuestions.Count > 0)
+                        {
+                            record.Status = "Manual input required";
+                            record.Notes = BuildUnansweredQuestionsNote(questionHandling.UnansweredQuestions);
+                        }
+                        else
+                        {
+                            record.Status = "Review and submit manually";
+                            record.Notes = "Screening questions were shown and answers were attempted, but final application confirmation was not detected.";
+                        }
                     }
                     else
                     {
@@ -766,6 +787,149 @@ public sealed class NaukriAutomationService : INaukriAutomationService
         finally
         {
             await page.CloseAsync();
+        }
+    }
+
+    private async Task<QuestionHandlingResult> TryHandleApplicationQuestionsAsync(IPage page, JobSearchRequest request, CancellationToken cancellationToken)
+    {
+        await page.WaitForTimeoutAsync(600);
+
+        var locator = page.Locator("[role='dialog'] input, [role='dialog'] textarea, [role='dialog'] select, [class*='drawer' i] input, [class*='drawer' i] textarea, [class*='drawer' i] select, [class*='apply' i] input, [class*='apply' i] textarea, [class*='apply' i] select");
+        var count = Math.Min(await locator.CountAsync(), 24);
+
+        var unanswered = new List<string>();
+        var answeredCount = 0;
+        var hasQuestions = false;
+
+        for (var i = 0; i < count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var field = locator.Nth(i);
+            if (!await field.IsVisibleAsync() || !await field.IsEnabledAsync())
+            {
+                continue;
+            }
+
+            var tagName = ((await field.EvaluateAsync<string>("el => (el.tagName || '').toLowerCase()")) ?? string.Empty).ToLowerInvariant();
+            var inputType = ((await field.GetAttributeAsync("type")) ?? string.Empty).ToLowerInvariant();
+            if (!IsSupportedQuestionField(tagName, inputType))
+            {
+                continue;
+            }
+
+            if (await HasExistingValueAsync(field, tagName))
+            {
+                continue;
+            }
+
+            var isRequired = await IsFieldRequiredAsync(field);
+
+            var question = await ExtractQuestionLabelAsync(field);
+            if (string.IsNullOrWhiteSpace(question))
+            {
+                if (!isRequired)
+                {
+                    continue;
+                }
+
+                question = $"Question {i + 1}";
+            }
+
+            hasQuestions = true;
+
+            var optionHints = tagName == "select"
+                ? await ExtractSelectOptionsAsync(field)
+                : [];
+
+            var answer = await _geminiResumeAnalyzerService.SuggestAnswerForApplicationQuestionAsync(
+                question,
+                request.ResumeText,
+                request.ResumeAnalysis,
+                optionHints,
+                cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(answer))
+            {
+                if (isRequired)
+                {
+                    unanswered.Add(question);
+                }
+
+                continue;
+            }
+
+            var filled = tagName == "select"
+                ? await TrySelectAnswerAsync(field, answer)
+                : await TryFillTextAnswerAsync(field, answer, inputType);
+
+            if (!filled)
+            {
+                if (isRequired)
+                {
+                    unanswered.Add(question);
+                }
+
+                continue;
+            }
+
+            answeredCount++;
+        }
+
+        if (!hasQuestions)
+        {
+            return new QuestionHandlingResult(false, 0, []);
+        }
+
+        if (unanswered.Count == 0)
+        {
+            await TrySubmitQuestionPanelAsync(page);
+        }
+
+        return new QuestionHandlingResult(true, answeredCount, unanswered.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
+    private static async Task<bool> IsFieldRequiredAsync(ILocator field)
+    {
+        var required = await field.GetAttributeAsync("required");
+        if (!string.IsNullOrWhiteSpace(required))
+        {
+            return true;
+        }
+
+        var ariaRequired = await field.GetAttributeAsync("aria-required");
+        if (string.Equals(ariaRequired, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var dataRequired = await field.GetAttributeAsync("data-required");
+        return string.Equals(dataRequired, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<bool> HasExistingValueAsync(ILocator field, string tagName)
+    {
+        try
+        {
+            return await field.EvaluateAsync<bool>(@"(el, inputTagName) => {
+                if (inputTagName === 'select' && el instanceof HTMLSelectElement) {
+                    const selected = el.options[el.selectedIndex];
+                    if (!selected) return false;
+                    const text = (selected.textContent || '').trim();
+                    const value = (selected.value || '').trim();
+                    return Boolean(value) && !/^select/i.test(text);
+                }
+
+                if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+                    return Boolean((el.value || '').trim());
+                }
+
+                return false;
+            }", tagName);
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -959,6 +1123,218 @@ public sealed class NaukriAutomationService : INaukriAutomationService
 
         return Regex.IsMatch(normalized, @"\bapply\b", RegexOptions.IgnoreCase);
     }
+
+    private static async Task<string> ExtractQuestionLabelAsync(ILocator field)
+    {
+        try
+        {
+            return await field.EvaluateAsync<string>(@"el => {
+                const clean = (value) => (value || '').replace(/\s+/g, ' ').trim();
+                const id = el.getAttribute('id');
+                if (id) {
+                    const safe = (window.CSS && window.CSS.escape) ? window.CSS.escape(id) : id;
+                    const explicitLabel = document.querySelector(`label[for='${safe}']`);
+                    if (explicitLabel && clean(explicitLabel.textContent)) {
+                        return clean(explicitLabel.textContent);
+                    }
+                }
+
+                const parentLabel = el.closest('label');
+                if (parentLabel && clean(parentLabel.textContent)) {
+                    return clean(parentLabel.textContent);
+                }
+
+                const ariaLabel = clean(el.getAttribute('aria-label'));
+                if (ariaLabel) return ariaLabel;
+
+                const placeholder = clean(el.getAttribute('placeholder'));
+                if (placeholder) return placeholder;
+
+                const name = clean(el.getAttribute('name'));
+                if (name) return name;
+
+                return '';
+            }");
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static async Task<IReadOnlyCollection<string>> ExtractSelectOptionsAsync(ILocator field)
+    {
+        try
+        {
+            var options = await field.EvaluateAsync<string[]>(@"el => {
+                if (!(el instanceof HTMLSelectElement)) return [];
+                return Array.from(el.options)
+                    .map(option => (option.textContent || '').replace(/\s+/g, ' ').trim())
+                    .filter(Boolean)
+                    .slice(0, 12);
+            }");
+
+            return options;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static async Task<bool> TrySelectAnswerAsync(ILocator field, string answer)
+    {
+        try
+        {
+            return await field.EvaluateAsync<bool>(@"(el, desiredAnswer) => {
+                if (!(el instanceof HTMLSelectElement)) return false;
+                const normalize = (value) => (value || '').toLowerCase().replace(/\s+/g, ' ').trim();
+                const desired = normalize(desiredAnswer);
+                if (!desired) return false;
+
+                const options = Array.from(el.options);
+                const exact = options.find(option => normalize(option.textContent) === desired || normalize(option.value) === desired);
+                const fuzzy = options.find(option => normalize(option.textContent).includes(desired) || desired.includes(normalize(option.textContent)));
+                const selected = exact || fuzzy;
+                if (!selected) return false;
+
+                el.value = selected.value;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+            }", answer);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task<bool> TryFillTextAnswerAsync(ILocator field, string answer, string inputType)
+    {
+        var resolved = answer.Trim();
+        if (string.IsNullOrWhiteSpace(resolved))
+        {
+            return false;
+        }
+
+        if (inputType == "number")
+        {
+            var numericMatch = Regex.Match(resolved, @"\d+(?:\.\d+)?");
+            if (!numericMatch.Success)
+            {
+                return false;
+            }
+
+            resolved = numericMatch.Value;
+        }
+
+        try
+        {
+            await field.FillAsync(resolved, new LocatorFillOptions
+            {
+                Timeout = 3000,
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static async Task TrySubmitQuestionPanelAsync(IPage page)
+    {
+        var locator = page.Locator("button, [role='button'], a");
+        var count = Math.Min(await locator.CountAsync(), 100);
+
+        for (var i = 0; i < count; i++)
+        {
+            var button = locator.Nth(i);
+            if (!await button.IsVisibleAsync())
+            {
+                continue;
+            }
+
+            var text = Regex.Replace(await button.InnerTextAsync(), "\\s+", " ").Trim();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            if (Regex.IsMatch(text, "cancel|close|back|later|skip", RegexOptions.IgnoreCase))
+            {
+                continue;
+            }
+
+            if (!Regex.IsMatch(text, "submit|continue|next|review|apply", RegexOptions.IgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                await button.ScrollIntoViewIfNeededAsync();
+                await button.ClickAsync(new LocatorClickOptions
+                {
+                    Timeout = 3000,
+                });
+                await page.WaitForTimeoutAsync(600);
+                return;
+            }
+            catch
+            {
+                // Try next actionable button.
+            }
+        }
+    }
+
+    private static bool IsSupportedQuestionField(string tagName, string inputType)
+    {
+        if (tagName == "textarea" || tagName == "select")
+        {
+            return true;
+        }
+
+        if (tagName != "input")
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(inputType) || inputType == "text" || inputType == "number")
+        {
+            return true;
+        }
+
+        return inputType switch
+        {
+            "hidden" => false,
+            "file" => false,
+            "password" => false,
+            "search" => false,
+            "submit" => false,
+            "button" => false,
+            "checkbox" => false,
+            "radio" => false,
+            _ => true,
+        };
+    }
+
+    private static string BuildUnansweredQuestionsNote(IReadOnlyCollection<string> questions)
+    {
+        var items = questions
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Take(8)
+            .ToList();
+
+        if (items.Count == 0)
+        {
+            return "Screening questions were shown but could not be answered from resume context.";
+        }
+
+        return $"Need manual answers for questions: {string.Join(" | ", items)}";
+    }
+
+    private sealed record QuestionHandlingResult(bool HasQuestions, int AnsweredCount, IReadOnlyCollection<string> UnansweredQuestions);
 
     private static async Task<bool> IsFirstVisibleAsync(ILocator locator)
     {

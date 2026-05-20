@@ -7,4 +7,6 @@ public sealed class JobSearchRequest
     public string Password { get; set; } = string.Empty;
     public int MaxJobs { get; set; }
     public bool Headless { get; set; }
+    public string ResumeText { get; set; } = string.Empty;
+    public ResumeAnalysisResult ResumeAnalysis { get; set; } = new();
 }
