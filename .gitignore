@@ -1,0 +1,27 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET build outputs
+**/[Bb]in/
+**/[Oo]bj/
+artifacts/
+TestResults/
+
+# NuGet packages produced by packing
+*.nupkg
+*.snupkg
+
+# Playwright local binaries/cache
+**/.playwright/
+
+# Job automation runtime data (generated at run time)
+JobAutoApplyMvc/JobAutoApply.Web/Data/NaukriStorageState.json
+JobAutoApplyMvc/JobAutoApply.Web/Data/RunDownloads/
+JobAutoApplyMvc/JobAutoApply.Web/Data/JobApplications.xlsx
+
+# Logs
+*.log

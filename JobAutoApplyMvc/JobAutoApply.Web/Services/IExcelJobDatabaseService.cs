@@ -5,4 +5,5 @@ namespace JobAutoApply.Web.Services;
 public interface IExcelJobDatabaseService
 {
     Task SaveRecordsAsync(IReadOnlyCollection<JobApplyRecord> records, CancellationToken cancellationToken);
+    Task<string> SaveRunAppliedRecordsAsync(IReadOnlyCollection<JobApplyRecord> records, CancellationToken cancellationToken);
 }

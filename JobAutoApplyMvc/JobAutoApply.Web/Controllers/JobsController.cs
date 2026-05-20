@@ -41,18 +41,38 @@ public sealed class JobsController : Controller
     }
 
     [HttpGet]
-    public IActionResult DownloadExcel()
+    public IActionResult DownloadExcel(string? runFile)
     {
-        var excelPath = Path.GetFullPath(_naukriOptions.ExcelFilePath);
-        if (!System.IO.File.Exists(excelPath))
+        if (string.IsNullOrWhiteSpace(runFile))
         {
-            return NotFound("Excel database file not found.");
+            return NotFound("Run-specific Excel file was not provided.");
         }
 
-        var fileName = Path.GetFileName(excelPath);
+        var sanitizedFileName = Path.GetFileName(runFile);
+        if (!string.Equals(runFile, sanitizedFileName, StringComparison.Ordinal))
+        {
+            return BadRequest("Invalid file name.");
+        }
+
+        var runDirectory = GetRunDownloadsDirectory();
+        var excelPath = Path.Combine(runDirectory, sanitizedFileName);
+        if (!System.IO.File.Exists(excelPath))
+        {
+            return NotFound("Run-specific Excel file not found.");
+        }
+
         var contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         var bytes = System.IO.File.ReadAllBytes(excelPath);
-        return File(bytes, contentType, fileName);
+        try
+        {
+            System.IO.File.Delete(excelPath);
+        }
+        catch
+        {
+            // Best effort cleanup.
+        }
+
+        return File(bytes, contentType, sanitizedFileName);
     }
 
     [HttpPost]
@@ -72,6 +92,7 @@ public sealed class JobsController : Controller
         {
             var resumeText = await _resumeTextExtractorService.ExtractTextAsync(resumeFile, cancellationToken);
             var analysis = await _geminiResumeAnalyzerService.AnalyzeAsync(resumeText, cancellationToken);
+            var jobTitleOptions = await _geminiResumeAnalyzerService.RecommendJobTitlesAsync(resumeText, analysis, cancellationToken);
 
             return Ok(new
             {
@@ -79,6 +100,7 @@ public sealed class JobsController : Controller
                 previewText = BuildPreviewText(resumeText),
                 suggestedJobTitle = analysis.SuggestedJobTitle,
                 keywords = analysis.Keywords,
+                jobTitleOptions,
             });
         }
         catch (Exception ex)
@@ -133,7 +155,12 @@ public sealed class JobsController : Controller
 
             var results = await _naukriAutomationService.SearchAndApplyAsync(request, cancellationToken);
             await _excelJobDatabaseService.SaveRecordsAsync(results, cancellationToken);
-            TempData["AutoDownloadExcel"] = true;
+            var runAppliedReportFile = await _excelJobDatabaseService.SaveRunAppliedRecordsAsync(results, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(runAppliedReportFile))
+            {
+                TempData["AutoDownloadExcel"] = true;
+                TempData["AutoDownloadExcelFile"] = runAppliedReportFile;
+            }
 
             model.ParsedJobTitle = resolvedJobTitle;
             model.Keywords = analysis.Keywords;
@@ -145,7 +172,8 @@ public sealed class JobsController : Controller
             }
             else
             {
-                model.StatusMessage = $"Completed. Processed {results.Count} jobs and updated Excel database.";
+                var appliedCount = results.Count(IsSuccessfullyAppliedInRun);
+                model.StatusMessage = $"Completed. Processed {results.Count} jobs and updated Excel database. Applied in this run: {appliedCount}.";
                 model.IsError = false;
             }
         }
@@ -188,5 +216,29 @@ public sealed class JobsController : Controller
         value = Regex.Replace(value, @"\bdot\s*net\b", ".NET", RegexOptions.IgnoreCase);
         value = Regex.Replace(value, @"\basp\.?\s*net\b", "ASP.NET", RegexOptions.IgnoreCase);
         return Regex.Replace(value, "\\s+", " ").Trim();
+    }
+
+    private string GetRunDownloadsDirectory()
+    {
+        var databasePath = Path.GetFullPath(_naukriOptions.ExcelFilePath);
+        var baseDirectory = Path.GetDirectoryName(databasePath);
+        if (string.IsNullOrWhiteSpace(baseDirectory))
+        {
+            baseDirectory = Path.GetFullPath("Data");
+        }
+
+        return Path.Combine(baseDirectory, "RunDownloads");
+    }
+
+    private static bool IsSuccessfullyAppliedInRun(JobApplyRecord record)
+    {
+        if (!record.ApplyType.Equals("Apply", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return record.Status.Contains("confirmed", StringComparison.OrdinalIgnoreCase)
+            || record.Status.Contains("submitted", StringComparison.OrdinalIgnoreCase)
+            || record.Status.Contains("success", StringComparison.OrdinalIgnoreCase);
     }
 }

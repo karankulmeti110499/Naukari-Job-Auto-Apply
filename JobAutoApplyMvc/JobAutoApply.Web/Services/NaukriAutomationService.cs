@@ -699,15 +699,43 @@ public sealed class NaukriAutomationService : INaukriAutomationService
                 Location = await GetFirstTextAsync(page, ".styles_jhc__location__W_pVs", ".locWdth", "span.location"),
             };
 
-            var hasApplyOnCompanySite = await ContainsActionTextAsync(page, "Apply on company site");
-            var hasDirectApply = await ContainsExactActionTextAsync(page, "Apply");
+            await WaitForApplyActionsAsync(page);
 
-            if (hasDirectApply)
+            var isAlreadyApplied = await HasAlreadyAppliedStateAsync(page);
+            var hasApplyOnCompanySite = await HasApplyOnCompanySiteActionAsync(page);
+            var hasDirectApply = await HasDirectApplyActionAsync(page);
+
+            if (isAlreadyApplied)
+            {
+                record.ApplyType = "Already applied";
+                record.Status = "Skipped";
+                record.Notes = "Already applied on Naukri; skipped and continued.";
+            }
+            else if (hasDirectApply)
             {
                 var clicked = await ClickDirectApplyAsync(page);
-                record.ApplyType = "Apply";
-                record.Status = clicked ? "Apply clicked" : "Apply button found";
-                record.Notes = "Applied through Naukri when possible.";
+                if (!clicked)
+                {
+                    record.ApplyType = "Apply available";
+                    record.Status = "Not clicked";
+                    record.Notes = "Apply action was visible but click did not complete.";
+                }
+                else
+                {
+                    var confirmed = await WaitForAppliedConfirmationAsync(page);
+                    if (confirmed)
+                    {
+                        record.ApplyType = "Apply";
+                        record.Status = "Applied confirmed";
+                        record.Notes = "Application was confirmed on Naukri after click.";
+                    }
+                    else
+                    {
+                        record.ApplyType = "Apply attempt";
+                        record.Status = "Clicked not confirmed";
+                        record.Notes = "Apply was clicked, but no applied confirmation was detected.";
+                    }
+                }
             }
             else if (hasApplyOnCompanySite)
             {
@@ -741,6 +769,21 @@ public sealed class NaukriAutomationService : INaukriAutomationService
         }
     }
 
+    private static async Task WaitForApplyActionsAsync(IPage page)
+    {
+        for (var i = 0; i < 10; i++)
+        {
+            if (await HasAlreadyAppliedStateAsync(page)
+                || await HasApplyOnCompanySiteActionAsync(page)
+                || await HasDirectApplyActionAsync(page))
+            {
+                return;
+            }
+
+            await page.WaitForTimeoutAsync(300);
+        }
+    }
+
     private static async Task<string> GetFirstTextAsync(IPage page, params string[] selectors)
     {
         foreach (var selector in selectors)
@@ -767,15 +810,92 @@ public sealed class NaukriAutomationService : INaukriAutomationService
         return await IsFirstVisibleAsync(locator);
     }
 
-    private static async Task<bool> ContainsExactActionTextAsync(IPage page, string actionText)
+    private static async Task<bool> HasApplyOnCompanySiteActionAsync(IPage page)
     {
-        var locator = page.Locator("button, a");
+        return await ContainsActionTextAsync(page, "Apply on company site");
+    }
+
+    private static async Task<bool> HasAlreadyAppliedStateAsync(IPage page)
+    {
+        var locator = page.Locator("button, a, span, div, p");
+        var count = Math.Min(await locator.CountAsync(), 250);
+
+        for (var i = 0; i < count; i++)
+        {
+            var element = locator.Nth(i);
+            if (!await element.IsVisibleAsync())
+            {
+                continue;
+            }
+
+            var text = await element.InnerTextAsync();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                continue;
+            }
+
+            var normalized = Regex.Replace(text, "\\s+", " ").Trim();
+            if (Regex.IsMatch(normalized, @"\balready\s*applied\b", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(normalized, @"^applied$", RegexOptions.IgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> WaitForAppliedConfirmationAsync(IPage page)
+    {
+        for (var i = 0; i < 12; i++)
+        {
+            if (await HasAlreadyAppliedStateAsync(page) || await HasApplySuccessMessageAsync(page))
+            {
+                return true;
+            }
+
+            await page.WaitForTimeoutAsync(300);
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> HasApplySuccessMessageAsync(IPage page)
+    {
+        var successSignals = new[]
+        {
+            "Applied successfully",
+            "Application submitted",
+            "Your application has been submitted",
+            "Application sent",
+        };
+
+        foreach (var signal in successSignals)
+        {
+            if (await ContainsActionTextAsync(page, signal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> HasDirectApplyActionAsync(IPage page)
+    {
+        var locator = page.Locator("button, a, [role='button']");
         var count = await locator.CountAsync();
 
         for (var i = 0; i < count; i++)
         {
-            var text = (await locator.Nth(i).InnerTextAsync()).Trim();
-            if (text.Equals(actionText, StringComparison.OrdinalIgnoreCase))
+            var element = locator.Nth(i);
+            if (!await element.IsVisibleAsync())
+            {
+                continue;
+            }
+
+            var text = await element.InnerTextAsync();
+            if (IsDirectApplyText(text))
             {
                 return true;
             }
@@ -786,29 +906,58 @@ public sealed class NaukriAutomationService : INaukriAutomationService
 
     private static async Task<bool> ClickDirectApplyAsync(IPage page)
     {
-        var locator = page.Locator("button, a");
+        await DismissBlockingLayersAsync(page);
+
+        var locator = page.Locator("button, a, [role='button']");
         var count = await locator.CountAsync();
 
         for (var i = 0; i < count; i++)
         {
             var element = locator.Nth(i);
-            var text = (await element.InnerTextAsync()).Trim();
-            if (!text.Equals("Apply", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
             if (!await element.IsVisibleAsync())
             {
                 continue;
             }
 
-            await element.ClickAsync();
-            await page.WaitForTimeoutAsync(1000);
-            return true;
+            var text = await element.InnerTextAsync();
+            if (!IsDirectApplyText(text))
+            {
+                continue;
+            }
+
+            try
+            {
+                await element.ScrollIntoViewIfNeededAsync();
+                await element.ClickAsync(new LocatorClickOptions
+                {
+                    Timeout = 3000,
+                });
+                await page.WaitForTimeoutAsync(1000);
+                return true;
+            }
+            catch
+            {
+                // Continue trying other matching buttons.
+            }
         }
 
         return false;
+    }
+
+    private static bool IsDirectApplyText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var normalized = Regex.Replace(text, "\\s+", " ").Trim();
+        if (normalized.Contains("company site", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return Regex.IsMatch(normalized, @"\bapply\b", RegexOptions.IgnoreCase);
     }
 
     private static async Task<bool> IsFirstVisibleAsync(ILocator locator)

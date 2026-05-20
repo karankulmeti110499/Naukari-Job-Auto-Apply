@@ -5,4 +5,5 @@ namespace JobAutoApply.Web.Services;
 public interface IGeminiResumeAnalyzerService
 {
     Task<ResumeAnalysisResult> AnalyzeAsync(string resumeText, CancellationToken cancellationToken);
+    Task<IReadOnlyCollection<string>> RecommendJobTitlesAsync(string resumeText, ResumeAnalysisResult analysis, CancellationToken cancellationToken);
 }

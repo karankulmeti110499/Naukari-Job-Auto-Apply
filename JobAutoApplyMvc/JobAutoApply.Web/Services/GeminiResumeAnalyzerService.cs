@@ -127,6 +127,90 @@ public sealed class GeminiResumeAnalyzerService : IGeminiResumeAnalyzerService
         return PostProcessResult(resumeText, result);
     }
 
+    public async Task<IReadOnlyCollection<string>> RecommendJobTitlesAsync(string resumeText, ResumeAnalysisResult analysis, CancellationToken cancellationToken)
+    {
+        var fallback = BuildDynamicFallbackTitles(analysis);
+
+        if (string.IsNullOrWhiteSpace(resumeText) || string.IsNullOrWhiteSpace(_geminiOptions.ApiKey))
+        {
+            return fallback;
+        }
+
+        var prompt = """
+                     Analyze this resume summary and suggest job titles suitable for job search.
+                     Return ONLY valid JSON in this exact format:
+                     {
+                       "jobTitleOptions": ["...", "...", "..."]
+                     }
+
+                     Rules:
+                     - Return 4 to 8 concise, searchable titles.
+                     - Each title must be 2 to 5 words.
+                     - Do not include company names, locations, years, or experience counts.
+                     - Prefer practical hiring titles that match skills and recent role.
+                     - Do not include markdown code fences.
+
+                     Existing inferred title:
+                     """ + analysis.SuggestedJobTitle + Environment.NewLine + """
+
+                     Extracted skills:
+                     """ + string.Join(", ", analysis.Keywords) + Environment.NewLine + """
+
+                     Resume Text:
+                     """ + Environment.NewLine + TruncateResumeText(resumeText);
+
+        var requestBody = new
+        {
+            contents = new[]
+            {
+                new
+                {
+                    parts = new[]
+                    {
+                        new { text = prompt },
+                    },
+                },
+            },
+        };
+
+        var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{_geminiOptions.Model}:generateContent?key={_geminiOptions.ApiKey}";
+        using var response = await _httpClient.PostAsJsonAsync(endpoint, requestBody, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var reason = await response.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogWarning("Gemini title recommendation call failed ({StatusCode}): {Reason}", response.StatusCode, reason);
+            return fallback;
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var responseText = GetModelText(document.RootElement);
+        var jsonPayload = ExtractJsonObject(responseText);
+        if (string.IsNullOrWhiteSpace(jsonPayload))
+        {
+            return fallback;
+        }
+
+        var aiOptions = ParseJobTitleOptions(jsonPayload);
+        if (aiOptions.Count == 0)
+        {
+            return fallback;
+        }
+
+        var merged = new List<string>();
+        foreach (var title in aiOptions)
+        {
+            AddUniqueTitle(merged, title);
+        }
+
+        foreach (var title in fallback)
+        {
+            AddUniqueTitle(merged, title);
+        }
+
+        return merged.Take(8).ToList();
+    }
+
     private static string GetModelText(JsonElement root)
     {
         if (!root.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0)
@@ -326,6 +410,153 @@ public sealed class GeminiResumeAnalyzerService : IGeminiResumeAnalyzerService
         }
 
         return Regex.Replace(input.Trim(), "\\s+", " ").Trim('"', '\'', '.', ',', ';', ':');
+    }
+
+    private static IReadOnlyCollection<string> ParseJobTitleOptions(string jsonPayload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(jsonPayload);
+            if (!document.RootElement.TryGetProperty("jobTitleOptions", out var optionsElement)
+                || optionsElement.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var options = new List<string>();
+            foreach (var item in optionsElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                AddUniqueTitle(options, item.GetString());
+            }
+
+            return options.Take(8).ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyCollection<string> BuildDynamicFallbackTitles(ResumeAnalysisResult analysis)
+    {
+        var options = new List<string>();
+
+        AddUniqueTitle(options, analysis.SuggestedJobTitle);
+
+        var role = InferRoleToken(analysis.SuggestedJobTitle);
+        foreach (var keyword in analysis.Keywords)
+        {
+            var keywordToken = NormalizeKeywordForTitle(keyword);
+            if (string.IsNullOrWhiteSpace(keywordToken))
+            {
+                continue;
+            }
+
+            AddUniqueTitle(options, $"{keywordToken} {role}");
+            if (options.Count >= 8)
+            {
+                break;
+            }
+        }
+
+        if (options.Count == 0)
+        {
+            AddUniqueTitle(options, "Software Engineer");
+        }
+
+        return options.Take(8).ToList();
+    }
+
+    private static void AddUniqueTitle(List<string> options, string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return;
+        }
+
+        var cleaned = CleanupTitle(title);
+        if (string.IsNullOrWhiteSpace(cleaned)
+            || !LooksLikeJobTitle(cleaned)
+            || ContainsMalformedRoleNumber(cleaned)
+            || options.Any(x => x.Equals(cleaned, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        options.Add(cleaned);
+    }
+
+    private static string InferRoleToken(string? suggestedTitle)
+    {
+        if (!string.IsNullOrWhiteSpace(suggestedTitle))
+        {
+            var words = suggestedTitle
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(x => x.Trim())
+                .ToArray();
+
+            var role = words.LastOrDefault(x => RoleKeywords.Contains(x, StringComparer.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(role))
+            {
+                return char.ToUpperInvariant(role[0]) + role[1..].ToLowerInvariant();
+            }
+        }
+
+        return "Engineer";
+    }
+
+    private static string NormalizeKeywordForTitle(string? keyword)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            return string.Empty;
+        }
+
+        var value = CleanupKeyword(keyword);
+        value = Regex.Replace(value, "[^A-Za-z0-9.+#\\s]", " ");
+        value = Regex.Replace(value, "\\s+", " ").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var words = value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0 || words.Length > 2)
+        {
+            return string.Empty;
+        }
+
+        if (value.Length < 2 || value.Length > 22)
+        {
+            return string.Empty;
+        }
+
+        value = Regex.Replace(value, @"\bdot\s*net\b", ".NET", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\basp\.?\s*net\b", "ASP.NET", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\bc\#\b", "C#", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\bai\b", "AI", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\bml\b", "ML", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\bui\b", "UI", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\bux\b", "UX", RegexOptions.IgnoreCase);
+        value = Regex.Replace(value, @"\bsql\b", "SQL", RegexOptions.IgnoreCase);
+
+        return value;
+    }
+
+    private static string TruncateResumeText(string resumeText)
+    {
+        const int maxLength = 7000;
+        if (resumeText.Length <= maxLength)
+        {
+            return resumeText;
+        }
+
+        return resumeText[..maxLength];
     }
 
     private static bool LooksLikeJobTitle(string title)

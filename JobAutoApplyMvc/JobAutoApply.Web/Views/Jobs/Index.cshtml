@@ -147,10 +147,30 @@
     </div>
 }
 
+<div class="modal fade" id="jobTitleOptionsModal" tabindex="-1" aria-labelledby="jobTitleOptionsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="jobTitleOptionsModalLabel">Choose Job Title</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-3">Based on your resume, select the best matching title for this run.</p>
+                <div id="jobTitleOptionsList" class="d-grid gap-2"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Skip</button>
+                <button type="button" class="btn btn-primary" id="applySelectedTitleButton">Use Selected Title</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @section Scripts {
     <script>
         (function () {
             const autoDownloadExcel = @((TempData["AutoDownloadExcel"]?.ToString() == "True") ? "true" : "false");
+            const autoDownloadExcelFile = '@(TempData["AutoDownloadExcelFile"]?.ToString() ?? string.Empty)';
             const form = document.getElementById('jobAutomationForm');
             const resumeInput = document.getElementById('ResumeFile');
             const titleInput = document.getElementById('JobTitleOverride');
@@ -161,16 +181,24 @@
             const resumeFilePreviewFrame = document.getElementById('resumeFilePreviewFrame');
             const keywordSection = document.getElementById('autoKeywordSection');
             const keywordContainer = document.getElementById('autoKeywordContainer');
+            const jobTitleOptionsModal = document.getElementById('jobTitleOptionsModal');
+            const jobTitleOptionsList = document.getElementById('jobTitleOptionsList');
+            const applySelectedTitleButton = document.getElementById('applySelectedTitleButton');
             let resumeFilePreviewUrl = null;
+            let jobTitleModal = null;
 
-            if (!form || !resumeInput || !titleInput || !previewCard || !previewText || !previewStatus || !resumeFilePreviewSection || !resumeFilePreviewFrame || !keywordSection || !keywordContainer) {
+            if (!form || !resumeInput || !titleInput || !previewCard || !previewText || !previewStatus || !resumeFilePreviewSection || !resumeFilePreviewFrame || !keywordSection || !keywordContainer || !jobTitleOptionsModal || !jobTitleOptionsList || !applySelectedTitleButton) {
                 return;
             }
 
-            if (autoDownloadExcel) {
+            if (window.bootstrap && window.bootstrap.Modal) {
+                jobTitleModal = new window.bootstrap.Modal(jobTitleOptionsModal);
+            }
+
+            if (autoDownloadExcel && autoDownloadExcelFile) {
                 const iframe = document.createElement('iframe');
                 iframe.style.display = 'none';
-                iframe.src = '@Url.Action("DownloadExcel", "Jobs")?v=' + Date.now();
+                iframe.src = '@Url.Action("DownloadExcel", "Jobs")?runFile=' + encodeURIComponent(autoDownloadExcelFile) + '&v=' + Date.now();
                 document.body.appendChild(iframe);
             }
 
@@ -213,6 +241,69 @@
                 keywordSection.classList.remove('d-none');
             }
 
+            function showJobTitleOptions(options, suggestedJobTitle) {
+                const titles = (options || []).filter(Boolean);
+                const fallbackTitle = (suggestedJobTitle || '').trim();
+                const mergedTitles = [];
+
+                titles.forEach(function (title) {
+                    if (!mergedTitles.some(function (x) { return x.toLowerCase() === title.toLowerCase(); })) {
+                        mergedTitles.push(title);
+                    }
+                });
+
+                if (fallbackTitle && !mergedTitles.some(function (x) { return x.toLowerCase() === fallbackTitle.toLowerCase(); })) {
+                    mergedTitles.unshift(fallbackTitle);
+                }
+
+                if (mergedTitles.length === 0) {
+                    return;
+                }
+
+                jobTitleOptionsList.innerHTML = '';
+
+                mergedTitles.forEach(function (title, index) {
+                    const optionId = 'jobTitleOption_' + index;
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'form-check';
+
+                    const radio = document.createElement('input');
+                    radio.className = 'form-check-input';
+                    radio.type = 'radio';
+                    radio.name = 'jobTitleOption';
+                    radio.id = optionId;
+                    radio.value = title;
+                    radio.checked = index === 0;
+
+                    const label = document.createElement('label');
+                    label.className = 'form-check-label';
+                    label.setAttribute('for', optionId);
+                    label.textContent = title;
+
+                    wrapper.appendChild(radio);
+                    wrapper.appendChild(label);
+                    jobTitleOptionsList.appendChild(wrapper);
+                });
+
+                if (jobTitleModal) {
+                    jobTitleModal.show();
+                } else {
+                    titleInput.value = mergedTitles[0];
+                }
+            }
+
+            applySelectedTitleButton.addEventListener('click', function () {
+                const selected = document.querySelector('input[name="jobTitleOption"]:checked');
+                if (selected && selected.value) {
+                    titleInput.value = selected.value;
+                    previewStatus.textContent = 'Resume analyzed. Selected title has been applied.';
+                }
+
+                if (jobTitleModal) {
+                    jobTitleModal.hide();
+                }
+            });
+
             async function analyzeResume(file) {
                 const formData = new FormData();
                 formData.append('resumeFile', file);
@@ -243,7 +334,8 @@
                 }
 
                 renderKeywords(payload.keywords || []);
-                previewStatus.textContent = 'Resume analyzed. Job title auto-filled from resume.';
+                showJobTitleOptions(payload.jobTitleOptions || [], payload.suggestedJobTitle || '');
+                previewStatus.textContent = 'Resume analyzed. Please choose a suggested job title.';
             }
 
             resumeInput.addEventListener('change', async function () {
