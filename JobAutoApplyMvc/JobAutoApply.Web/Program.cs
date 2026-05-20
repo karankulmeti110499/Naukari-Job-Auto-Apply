@@ -10,6 +10,14 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 builder.Services.Configure<GeminiOptions>(builder.Configuration.GetSection(GeminiOptions.SectionName));
+builder.Services.PostConfigure<GeminiOptions>(options =>
+{
+    var apiKeyFromEnv = builder.Configuration["GEMINI_API_KEY"];
+    if (!string.IsNullOrWhiteSpace(apiKeyFromEnv))
+    {
+        options.ApiKey = apiKeyFromEnv.Trim();
+    }
+});
 builder.Services.Configure<NaukriOptions>(builder.Configuration.GetSection(NaukriOptions.SectionName));
 
 builder.Services.AddScoped<IResumeTextExtractorService, ResumeTextExtractorService>();
